@@ -2,7 +2,7 @@ import System.Process
 import System.IO
 import Data.List
 import Data.Maybe (fromMaybe)
-import Control.Monad (foldM)
+import Control.Monad (foldM, foldM_)
 
 
 data ReplState = ReplState { prompts :: [String],
@@ -53,14 +53,14 @@ recursiveRender (ReplState prompts inputs outputs) =
                             hFlush stdout
                             recursiveRender (ReplState restPrompts restInputs restOutputs)
 
-doUserCommand :: GHCIProc -> ReplState -> IO (ReplState, GHCIProc)
+doUserCommand :: GHCIProc -> ReplState -> IO (GHCIProc, ReplState)
 doUserCommand proc replState = do
     input <- getLine
     case input of
         "" -> reevaluate replState proc
         otherwise -> do
             newState <- doCommand proc replState input
-            return (newState, proc)
+            return (proc, newState)
 
 doCommand :: GHCIProc -> ReplState -> String -> IO ReplState
 doCommand (GHCIProc ghci_stdin ghci_stdout ghci_stderr) (ReplState prompts inputs outputs) input = do
@@ -70,7 +70,7 @@ doCommand (GHCIProc ghci_stdin ghci_stdout ghci_stderr) (ReplState prompts input
     err <- waitingOutput ghci_stderr
     return (ReplState (prompt:prompts) (input:inputs) ((red err ++ out):outputs))
 
-reevaluate :: ReplState -> GHCIProc -> IO (ReplState, GHCIProc)
+reevaluate :: ReplState -> GHCIProc -> IO (GHCIProc, ReplState)
 reevaluate replState ghci = do
 
     -- close the old GHCI process
@@ -81,7 +81,7 @@ reevaluate replState ghci = do
     header <- readTillPrompt (out newInterp)
 
     replState <- foldM (doCommand newInterp) (ReplState [header] [] []) (reverse $ inputs replState)
-    return (replState, newInterp)
+    return (newInterp, replState)
 
 waitingOutput fileHandle = do
     isReady <- hReady fileHandle
@@ -118,21 +118,16 @@ interp = do
     (Just ghci_stdin, Just ghci_stdout, Just ghci_stderr, p_handle) <- createProcess (proc "/usr/local/bin/ghci" []){ std_out = CreatePipe, std_in = CreatePipe, std_err = CreatePipe }
     return (GHCIProc ghci_stdin ghci_stdout ghci_stderr)
 
+step :: (GHCIProc, ReplState) -> int -> IO (GHCIProc, ReplState)
+step (proc, rs) _ = do
+    fullRenderAtRow 10 rs
+    (newproc, newrs) <- doUserCommand proc rs
+    return (newproc, newrs)
+
 main = do
     ghci <- interp
     r <- readTillPrompt (out ghci)
     putStr r
     hFlush stdout
-    let rs = ReplState [r] [] [] in do
-        (rs, ghci) <- doUserCommand ghci rs
-        fullRenderAtRow 10 rs
-        (rs, ghci) <- doUserCommand ghci rs
-        fullRenderAtRow 10 rs
-        (rs, ghci) <- doUserCommand ghci rs
-        fullRenderAtRow 10 rs
-        (rs, ghci) <- doUserCommand ghci rs
-        fullRenderAtRow 10 rs
-        (rs, ghci) <- doUserCommand ghci rs
-        fullRenderAtRow 10 rs
-        (rs, ghci) <- doUserCommand ghci rs
-        fullRenderAtRow 10 rs
+    foldM_ step (ghci, ReplState [r] [] []) [1..]
+
