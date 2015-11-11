@@ -53,11 +53,16 @@ recursiveRender (ReplState prompts inputs outputs) =
                             hFlush stdout
                             recursiveRender (ReplState restPrompts restInputs restOutputs)
 
+tailOrEmpty :: [String] -> [String]
+tailOrEmpty [] = []
+tailOrEmpty (_:rest) = rest
+
 doUserCommand :: GHCIProc -> ReplState -> IO (GHCIProc, ReplState)
 doUserCommand proc replState = do
     input <- getLine
     case input of
-        "" -> reevaluate replState proc
+        "" -> reevaluate (inputs replState) proc
+        "undo" -> reevaluate (tailOrEmpty $ inputs replState) proc
         otherwise -> do
             newState <- doCommand proc replState input
             return (proc, newState)
@@ -70,8 +75,8 @@ doCommand (GHCIProc ghci_stdin ghci_stdout ghci_stderr) (ReplState prompts input
     err <- waitingOutput ghci_stderr
     return (ReplState (prompt:prompts) (input:inputs) ((red err ++ out):outputs))
 
-reevaluate :: ReplState -> GHCIProc -> IO (GHCIProc, ReplState)
-reevaluate replState ghci = do
+reevaluate :: [String] -> GHCIProc -> IO (GHCIProc, ReplState)
+reevaluate inputs ghci = do
 
     -- close the old GHCI process
     hPutStr (inp ghci) "\xa"
@@ -80,7 +85,7 @@ reevaluate replState ghci = do
     newInterp <- interp
     header <- readTillPrompt (out newInterp)
 
-    replState <- foldM (doCommand newInterp) (ReplState [header] [] []) (reverse $ inputs replState)
+    replState <- foldM (doCommand newInterp) (ReplState [header] [] []) (reverse $ inputs)
     return (newInterp, replState)
 
 waitingOutput fileHandle = do
