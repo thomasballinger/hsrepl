@@ -1,0 +1,107 @@
+import System.Process
+import System.IO
+import Data.List
+import Data.Maybe (fromMaybe)
+
+
+data ReplState = ReplState { prompts :: [String],
+                             inputs :: [String],
+                             outputs :: [String] }
+                             deriving (Show, Eq)
+
+cursorAtSpot x y = "\x1b[" ++ show ( y + 1 ) ++ ";" ++ show (x + 1) ++ "H"
+newScreen = do
+    putStr "\x1b[2J"
+    hFlush stdout
+
+red s = "\x1b[41m" ++ s ++ "\x1b[0m"
+
+fullRenderAtRow :: Int -> ReplState -> IO ()
+fullRenderAtRow row replState = do
+    putStr $ cursorAtSpot 0 row
+    hFlush stdout
+    newScreen
+    fullRender replState
+
+-- Renders a full REPL session; it better fit on one screen.
+fullRender :: ReplState -> IO ()
+fullRender (ReplState prompts inputs outputs) =
+    recursiveRender (ReplState (reverse prompts) (reverse inputs) (reverse outputs))
+
+recursiveRender :: ReplState -> IO ()
+recursiveRender (ReplState prompts inputs outputs) =
+    case prompts of
+        [] -> return ()
+        prompt:restPrompts -> do
+            putStr prompt
+            hFlush stdout
+            case inputs of
+                [] -> return ()
+                inp:restInputs -> do
+                    putStr $ inp ++ "\n"
+                    hFlush stdout
+                    case outputs of
+                        [] -> return ()
+                        out:restOutputs -> do
+                            putStr out
+                            hFlush stdout
+                            recursiveRender (ReplState restPrompts restInputs restOutputs)
+
+doCommand :: ReplState -> Handle -> Handle -> Handle -> IO ReplState
+doCommand (ReplState prompts inputs outputs) ghci_stdin ghci_stdout ghci_stderr = do
+    inp <- getLine
+    hPutStrLn ghci_stdin inp
+    hFlush ghci_stdin
+    (out, prompt) <- outputAndPrompt ghci_stdout
+    err <- waitingOutput ghci_stderr
+    return (ReplState (prompt:prompts) (inp:inputs) (((red err) ++ out):outputs))
+
+waitingOutput fileHandle = do
+    isReady <- hReady fileHandle
+    if isReady
+        then do
+            curChar <- hGetChar fileHandle
+            rest <- waitingOutput fileHandle
+            return (curChar : rest)
+        else return ""
+
+-- Returns the output from a previous command and prompt
+outputAndPrompt :: Handle -> IO (String, String)
+outputAndPrompt fileHandle = do
+    response <- readTillPrompt fileHandle
+    let lastNewline = fromMaybe 0 (elemIndex '\n' (reverse response)) in
+        let splitSpot = length response - lastNewline in
+            let output = take splitSpot response in
+                let prompt = drop splitSpot response in
+                    return (output, prompt)
+
+readTillPrompt :: Handle -> IO String
+readTillPrompt fileHandle = do
+    c <- hGetChar fileHandle
+    if c == '>'
+        then do
+            space <- hGetChar fileHandle
+            return (">" ++ [space])
+        else do
+            rest <- readTillPrompt fileHandle
+            return (c : rest)
+
+
+main = do
+    (Just ghci_stdin, Just ghci_stdout, Just ghci_stderr, p_handle) <- createProcess (proc "/usr/local/bin/ghci" []){ std_out = CreatePipe, std_in = CreatePipe, std_err = CreatePipe }
+    r <- readTillPrompt ghci_stdout
+    putStr r
+    hFlush stdout
+    let rs = ReplState [r] [] [] in do
+        rs <- doCommand rs ghci_stdin ghci_stdout ghci_stderr
+        fullRenderAtRow 10 rs
+        rs <- doCommand rs ghci_stdin ghci_stdout ghci_stderr
+        fullRenderAtRow 10 rs
+        rs <- doCommand rs ghci_stdin ghci_stdout ghci_stderr
+        fullRenderAtRow 10 rs
+        rs <- doCommand rs ghci_stdin ghci_stdout ghci_stderr
+        fullRenderAtRow 10 rs
+        rs <- doCommand rs ghci_stdin ghci_stdout ghci_stderr
+        fullRenderAtRow 10 rs
+        rs <- doCommand rs ghci_stdin ghci_stdout ghci_stderr
+        fullRenderAtRow 10 rs
