@@ -3,6 +3,7 @@ import System.IO
 import Data.List
 import Data.Maybe (fromMaybe)
 import Control.Monad (foldM, foldM_)
+import System.Directory(getTemporaryDirectory, removeFile)
 
 
 data ReplState = ReplState { prompts :: [String],
@@ -19,8 +20,6 @@ cursorAtSpot x y = "\x1b[" ++ show ( y + 1 ) ++ ";" ++ show (x + 1) ++ "H"
 newScreen = do
     putStr "\x1b[2J"
     hFlush stdout
-
-red s = "\x1b[41m" ++ s ++ "\x1b[0m"
 
 fullRenderAtRow :: Int -> ReplState -> IO ()
 fullRenderAtRow row replState = do
@@ -57,6 +56,9 @@ doUserCommand proc replState = do
     case input of
         "" -> reevaluate (inputs replState) proc
         "undo" -> reevaluate (tailOrEmpty $ inputs replState) proc
+        "edit" -> do
+            newBuffer <- fromEditor (bufferFromReplState replState)
+            reevaluate (inputsFromBuffer newBuffer) proc
         otherwise -> do
             newState <- doCommand proc replState (input ++ "\n")
             return (proc, newState)
@@ -67,7 +69,7 @@ doCommand (GHCIProc ghci_stdin ghci_stdout ghci_stderr) (ReplState prompts input
     hFlush ghci_stdin
     (out, prompt) <- outputAndPrompt ghci_stdout
     err <- waitingOutput ghci_stderr
-    return (ReplState (prompt:prompts) (input:inputs) ((red err ++ out):outputs))
+    return (ReplState (prompt:prompts) (input:inputs) ((err ++ out):outputs))
 
 reevaluate :: [String] -> GHCIProc -> IO (GHCIProc, ReplState)
 reevaluate inputs ghci = do
@@ -107,7 +109,8 @@ readTillPrompt fileHandle = do
     if c == '>'
         then do
             space <- hGetChar fileHandle
-            return (">" ++ [space])
+            case space of
+              ' ' -> return (">" ++ [space])
         else do
             rest <- readTillPrompt fileHandle
             return (c : rest)
@@ -120,6 +123,29 @@ interp = do
             std_in = CreatePipe,
             std_err = CreatePipe }
     return (GHCIProc stdin stdout stderr)
+
+fromEditor :: String -> IO String
+fromEditor buffer = do
+    tempdir <- getTemporaryDirectory
+    (tempfile, temph) <- openTempFile tempdir "session.hs"
+    hPutStr temph buffer
+    hFlush temph
+    hClose temph
+    (_, _, _, p_handle) <- createProcess (proc "vim" [tempfile])
+    waitForProcess p_handle
+    editedBuffer <- readFile tempfile
+    removeFile tempfile
+    return editedBuffer
+
+--TODO there are just mocked out
+inputsFromBuffer :: String -> [String]
+inputsFromBuffer buffer = reverse [x ++ "\n" | x <- lines buffer, head x /= '-']
+
+bufferFromReplState :: ReplState -> String
+bufferFromReplState (ReplState _ inputs outputs) = bufferFromInputsOutputs (reverse inputs) (reverse outputs)
+bufferFromInputsOutputs :: [String] -> [String] -> String
+bufferFromInputsOutputs (input:inputs) (output:outputs) = input ++ intercalate "" ["--# " ++ x ++ "\n" | x <- lines output] ++ bufferFromInputsOutputs inputs outputs
+bufferFromInputsOutputs [] [] = ""
 
 step :: (GHCIProc, ReplState) -> int -> IO (GHCIProc, ReplState)
 step (proc, rs) _ = do
