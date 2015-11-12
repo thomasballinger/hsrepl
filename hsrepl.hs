@@ -41,7 +41,7 @@ recursiveRender (x:xs) = do
     recursiveRender xs
 recursiveRender [] = return ()
 
--- Zip three sequences with lengths n and or n + 1 where
+-- Zip three sequences of lengths x, y, z where x >= y >= z and x <= z + 1
 combineThree :: [a] -> [a] -> [a] -> [a]
 combineThree (x:xs) (y:ys) (z:zs) = [x, y, z] ++ combineThree xs ys zs
 combineThree (x:xs) (y:yx) [] = [x, y]
@@ -79,7 +79,7 @@ reevaluate inputs ghci = do
     newInterp <- interp
     header <- readTillPrompt (out newInterp)
 
-    replState <- foldM (doCommand newInterp) (ReplState [header] [] []) (reverse $ inputs)
+    replState <- foldM (doCommand newInterp) (ReplState [header] [] []) (reverse inputs)
     return (newInterp, replState)
 
 waitingOutput fileHandle = do
@@ -119,14 +119,11 @@ interp = do
 
 step :: (GHCIProc, ReplState) -> int -> IO (GHCIProc, ReplState)
 step (proc, rs) _ = do
-    fullRenderAtRow 10 rs
+    fullRenderAtRow 0 rs
     (newproc, newrs) <- doUserCommand proc rs
     return (newproc, newrs)
 
 main = do
     ghci <- interp
     r <- readTillPrompt (out ghci)
-    putStr r
-    hFlush stdout
     foldM_ step (ghci, ReplState [r] [] []) [1..]
-
