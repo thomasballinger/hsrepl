@@ -44,7 +44,7 @@ recursiveRender (ReplState prompts inputs outputs) =
             case inputs of
                 [] -> return ()
                 inp:restInputs -> do
-                    putStr $ inp ++ "\n"
+                    putStr inp
                     hFlush stdout
                     case outputs of
                         [] -> return ()
@@ -64,12 +64,12 @@ doUserCommand proc replState = do
         "" -> reevaluate (inputs replState) proc
         "undo" -> reevaluate (tailOrEmpty $ inputs replState) proc
         otherwise -> do
-            newState <- doCommand proc replState input
+            newState <- doCommand proc replState (input ++ "\n")
             return (proc, newState)
 
 doCommand :: GHCIProc -> ReplState -> String -> IO ReplState
 doCommand (GHCIProc ghci_stdin ghci_stdout ghci_stderr) (ReplState prompts inputs outputs) input = do
-    hPutStrLn ghci_stdin input
+    hPutStr ghci_stdin input
     hFlush ghci_stdin
     (out, prompt) <- outputAndPrompt ghci_stdout
     err <- waitingOutput ghci_stderr
