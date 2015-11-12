@@ -114,14 +114,17 @@ readTillPrompt fileHandle = do
 
 interp :: IO GHCIProc
 interp = do
-    (Just ghci_stdin, Just ghci_stdout, Just ghci_stderr, p_handle) <- createProcess (proc "/usr/local/bin/ghci" []){ std_out = CreatePipe, std_in = CreatePipe, std_err = CreatePipe }
-    return (GHCIProc ghci_stdin ghci_stdout ghci_stderr)
+    (Just stdin, Just stdout, Just stderr, p_handle) <-
+        createProcess (proc "ghci" []){
+            std_out = CreatePipe,
+            std_in = CreatePipe,
+            std_err = CreatePipe }
+    return (GHCIProc stdin stdout stderr)
 
 step :: (GHCIProc, ReplState) -> int -> IO (GHCIProc, ReplState)
 step (proc, rs) _ = do
     fullRenderAtRow 0 rs
-    (newproc, newrs) <- doUserCommand proc rs
-    return (newproc, newrs)
+    doUserCommand proc rs
 
 main = do
     ghci <- interp
