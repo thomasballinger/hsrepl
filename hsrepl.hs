@@ -32,26 +32,20 @@ fullRenderAtRow row replState = do
 -- Renders a full REPL session; it better fit on one screen.
 fullRender :: ReplState -> IO ()
 fullRender (ReplState prompts inputs outputs) =
-    recursiveRender (ReplState (reverse prompts) (reverse inputs) (reverse outputs))
+    recursiveRender (combineThree (reverse prompts) (reverse inputs) (reverse outputs))
 
-recursiveRender :: ReplState -> IO ()
-recursiveRender (ReplState prompts inputs outputs) =
-    case prompts of
-        [] -> return ()
-        prompt:restPrompts -> do
-            putStr prompt
-            hFlush stdout
-            case inputs of
-                [] -> return ()
-                inp:restInputs -> do
-                    putStr inp
-                    hFlush stdout
-                    case outputs of
-                        [] -> return ()
-                        out:restOutputs -> do
-                            putStr out
-                            hFlush stdout
-                            recursiveRender (ReplState restPrompts restInputs restOutputs)
+recursiveRender :: [String] -> IO ()
+recursiveRender (x:xs) = do
+    putStr x
+    hFlush stdout
+    recursiveRender xs
+recursiveRender [] = return ()
+
+-- Zip three sequences with lengths n and or n + 1 where
+combineThree :: [a] -> [a] -> [a] -> [a]
+combineThree (x:xs) (y:ys) (z:zs) = [x, y, z] ++ combineThree xs ys zs
+combineThree (x:xs) (y:yx) [] = [x, y]
+combineThree (x:xs) [] [] = [x]
 
 tailOrEmpty :: [String] -> [String]
 tailOrEmpty [] = []
