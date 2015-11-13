@@ -98,11 +98,8 @@ waitingOutput fileHandle = do
 outputAndPrompt :: Handle -> IO (String, String)
 outputAndPrompt fileHandle = do
     response <- readTillPrompt fileHandle
-    let lastNewline = fromMaybe 0 (elemIndex '\n' (reverse response)) in
-        let splitSpot = length response - lastNewline in
-            let output = take splitSpot response in
-                let prompt = drop splitSpot response in
-                    return (output, prompt)
+    let prompt:reversed_output = reverse (lines response) in
+        return (intercalate "\n" (reverse reversed_output ++ [""]) , prompt)
 
 readTillPrompt :: Handle -> IO String
 readTillPrompt fileHandle = do
