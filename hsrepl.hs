@@ -1,9 +1,10 @@
 import System.Process (createProcess, waitForProcess, StdStream(CreatePipe), std_out, std_in, std_err, proc)
 import System.IO (Handle, hFlush, stdout, hPutStr, hGetChar, hClose, openTempFile, hReady)
-import Data.List
+import Data.List (elemIndex, intercalate)
 import Data.Maybe (fromMaybe)
 import Control.Monad (foldM, foldM_)
 import System.Directory(getTemporaryDirectory, removeFile)
+import System.Environment(lookupEnv)
 
 
 data ReplState = ReplState { prompts :: [String],
@@ -134,7 +135,10 @@ fromEditor buffer = do
     hPutStr temph buffer
     hFlush temph
     hClose temph
-    (_, _, _, p_handle) <- createProcess (proc "vim" [tempfile])
+    visual <- lookupEnv "VISUAL"
+    editor <- lookupEnv "EDITOR"  -- TODO possibly skip this lookup
+    (_, _, _, p_handle) <- createProcess
+        (proc (fromMaybe (fromMaybe "vim" editor) visual) [tempfile])
     waitForProcess p_handle
     editedBuffer <- readFile tempfile
     removeFile tempfile
