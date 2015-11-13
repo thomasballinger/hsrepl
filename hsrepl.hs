@@ -1,5 +1,5 @@
-import System.Process
-import System.IO
+import System.Process (createProcess, waitForProcess, StdStream(CreatePipe), std_out, std_in, std_err, proc)
+import System.IO (Handle, hFlush, stdout, hPutStr, hGetChar, hClose, openTempFile, hReady)
 import Data.List
 import Data.Maybe (fromMaybe)
 import Control.Monad (foldM, foldM_)
@@ -108,9 +108,12 @@ readTillPrompt fileHandle = do
     c <- hGetChar fileHandle
     if c == '>'
         then do
-            space <- hGetChar fileHandle
-            case space of
-              ' ' -> return (">" ++ [space])
+            nextChar <- hGetChar fileHandle
+            isReady <- hReady fileHandle
+            case (nextChar, isReady) of
+                (' ', False) -> return (">" ++ [nextChar])
+                (c, True) -> do rest <- readTillPrompt fileHandle
+                                return ('>':c:rest)
         else do
             rest <- readTillPrompt fileHandle
             return (c : rest)
@@ -137,14 +140,18 @@ fromEditor buffer = do
     removeFile tempfile
     return editedBuffer
 
---TODO there are just mocked out
 inputsFromBuffer :: String -> [String]
 inputsFromBuffer buffer = reverse [x ++ "\n" | x <- lines buffer, head x /= '-']
 
 bufferFromReplState :: ReplState -> String
-bufferFromReplState (ReplState _ inputs outputs) = bufferFromInputsOutputs (reverse inputs) (reverse outputs)
+bufferFromReplState (ReplState _ inputs outputs) =
+    bufferFromInputsOutputs (reverse inputs) (reverse outputs)
+
 bufferFromInputsOutputs :: [String] -> [String] -> String
-bufferFromInputsOutputs (input:inputs) (output:outputs) = input ++ intercalate "" ["--# " ++ x ++ "\n" | x <- lines output] ++ bufferFromInputsOutputs inputs outputs
+bufferFromInputsOutputs (input:inputs) (output:outputs) =
+    input ++
+    intercalate "" ["--# " ++ x ++ "\n" | x <- lines output] ++
+    bufferFromInputsOutputs inputs outputs
 bufferFromInputsOutputs [] [] = ""
 
 step :: (GHCIProc, ReplState) -> int -> IO (GHCIProc, ReplState)
