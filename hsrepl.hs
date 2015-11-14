@@ -18,16 +18,11 @@ data GHCIProc = GHCIProc { inp :: Handle,
                            deriving (Show, Eq)
 
 cursorAtSpot x y = "\x1b[" ++ show ( y + 1 ) ++ ";" ++ show (x + 1) ++ "H"
-newScreen = do
-    putStr "\x1b[2J"
-    hFlush stdout
+newScreen = putStr "\x1b[2J" >> hFlush stdout
 
 fullRenderAtRow :: Int -> ReplState -> IO ()
-fullRenderAtRow row replState = do
-    putStr $ cursorAtSpot 0 row
-    hFlush stdout
-    newScreen
-    fullRender replState
+fullRenderAtRow row replState = putStr (cursorAtSpot 0 row) >>
+    hFlush stdout >> newScreen >> fullRender replState
 
 -- Renders a full REPL session; it better fit on one screen.
 fullRender :: ReplState -> IO ()
@@ -35,10 +30,7 @@ fullRender (ReplState prompts inputs outputs) =
     recursiveRender (combineThree (reverse prompts) (reverse inputs) (reverse outputs))
 
 recursiveRender :: [String] -> IO ()
-recursiveRender (x:xs) = do
-    putStr x
-    hFlush stdout
-    recursiveRender xs
+recursiveRender (x:xs) = putStr x >> hFlush stdout >> recursiveRender xs
 recursiveRender [] = return ()
 
 -- Zip three sequences of lengths x, y, z where x >= y >= z and x <= z + 1
@@ -52,17 +44,14 @@ tailOrEmpty [] = []
 tailOrEmpty (_:rest) = rest
 
 doUserCommand :: GHCIProc -> ReplState -> IO (GHCIProc, ReplState)
-doUserCommand proc replState = do
-    input <- getLine
-    case input of
+doUserCommand proc replState =
+    getLine >>= (\input -> case input of
         "" -> reevaluate (inputs replState) proc
         "undo" -> reevaluate (tailOrEmpty $ inputs replState) proc
-        "edit" -> do
-            newBuffer <- fromEditor (bufferFromReplState replState)
-            reevaluate (inputsFromBuffer newBuffer) proc
-        otherwise -> do
-            newState <- doCommand proc replState (input ++ "\n")
-            return (proc, newState)
+        "edit" ->
+            fromEditor (bufferFromReplState replState) >>=
+                (\newBuffer -> reevaluate (inputsFromBuffer newBuffer) proc)
+        otherwise -> doCommand proc replState (input ++ "\n") >>= (\x -> return (proc, x)))
 
 doCommand :: GHCIProc -> ReplState -> String -> IO ReplState
 doCommand (GHCIProc ghci_stdin ghci_stdout ghci_stderr) (ReplState prompts inputs outputs) input = do
@@ -96,10 +85,10 @@ waitingOutput fileHandle = do
 
 -- Returns the output from a previous command and prompt
 outputAndPrompt :: Handle -> IO (String, String)
-outputAndPrompt fileHandle = do
-    response <- readTillPrompt fileHandle
-    let prompt:reversed_output = reverse (lines response) in
-        return (intercalate "\n" (reverse reversed_output ++ [""]) , prompt)
+outputAndPrompt fileHandle =
+    readTillPrompt fileHandle >>= (\response ->
+        let prompt:reversed_output = reverse (lines response) in
+            return (intercalate "\n" (reverse reversed_output ++ [""]) , prompt))
 
 readTillPrompt :: Handle -> IO String
 readTillPrompt fileHandle = do
@@ -117,13 +106,12 @@ readTillPrompt fileHandle = do
             return (c : rest)
 
 interp :: IO GHCIProc
-interp = do
-    (Just stdin, Just stdout, Just stderr, p_handle) <-
-        createProcess (proc "ghci" []){
+interp = createProcess (proc "ghci" []){
             std_out = CreatePipe,
             std_in = CreatePipe,
-            std_err = CreatePipe }
-    return (GHCIProc stdin stdout stderr)
+            std_err = CreatePipe} >>=
+            (\(Just stdin, Just stdout, Just stderr, p_handle) ->
+                return (GHCIProc stdin stdout stderr))
 
 fromEditor :: String -> IO String
 fromEditor buffer = do
@@ -156,11 +144,8 @@ bufferFromInputsOutputs (input:inputs) (output:outputs) =
 bufferFromInputsOutputs [] [] = ""
 
 step :: (GHCIProc, ReplState) -> int -> IO (GHCIProc, ReplState)
-step (proc, rs) _ = do
-    fullRenderAtRow 0 rs
-    doUserCommand proc rs
+step (proc, rs) _ = fullRenderAtRow 0 rs >> doUserCommand proc rs
 
-main = do
-    ghci <- interp
-    r <- readTillPrompt (out ghci)
-    foldM_ step (ghci, ReplState [r] [] []) [1..]
+main = interp >>= \ghci ->
+    readTillPrompt (out ghci) >>= \r ->
+        foldM_ step (ghci, ReplState [r] [] []) [1..]
