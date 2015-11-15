@@ -30,8 +30,7 @@ fullRender (ReplState prompts inputs outputs) =
     recursiveRender (combineThree (reverse prompts) (reverse inputs) (reverse outputs))
 
 recursiveRender :: [String] -> IO ()
-recursiveRender (x:xs) = putStr x >> hFlush stdout >> recursiveRender xs
-recursiveRender [] = return ()
+recursiveRender = foldr (\x -> (>>) (putStr x >> hFlush stdout)) (return ())
 
 -- Zip three sequences of lengths x, y, z where x >= y >= z and x <= z + 1
 combineThree :: [a] -> [a] -> [a] -> [a]
@@ -118,7 +117,7 @@ fromEditor buffer = do
     hFlush temph
     hClose temph
     visual <- lookupEnv "VISUAL"
-    editor <- lookupEnv "EDITOR"  -- TODO possibly skip this lookup
+    editor <- lookupEnv "EDITOR"
     (_, _, _, p_handle) <- createProcess
         (proc (fromMaybe (fromMaybe "vim" editor) visual) [tempfile])
     waitForProcess p_handle
@@ -131,14 +130,11 @@ inputsFromBuffer buffer = reverse [x ++ "\n" | x <- lines buffer, head x /= '-']
 
 bufferFromReplState :: ReplState -> String
 bufferFromReplState (ReplState _ inputs outputs) =
-    bufferFromInputsOutputs (reverse inputs) (reverse outputs)
+    bufferFromInputOutputPairs "--# save and quit to eval" $ zip inputs outputs
 
-bufferFromInputsOutputs :: [String] -> [String] -> String
-bufferFromInputsOutputs (input:inputs) (output:outputs) =
-    input ++
-    intercalate "" ["--# " ++ x ++ "\n" | x <- lines output] ++
-    bufferFromInputsOutputs inputs outputs
-bufferFromInputsOutputs [] [] = ""
+bufferFromInputOutputPairs :: String -> [(String, String)] -> String
+bufferFromInputOutputPairs = foldl (\acc (input, output) ->
+    input ++ intercalate "" ["--# " ++ x ++ "\n" | x <- lines output] ++ acc)
 
 step :: (GHCIProc, ReplState) -> int -> IO (GHCIProc, ReplState)
 step (proc, rs) _ = fullRenderAtRow 0 rs >> doUserCommand proc rs
