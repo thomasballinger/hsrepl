@@ -93,17 +93,14 @@ outputAndPrompt fileHandle =
 readTillPrompt :: Handle -> IO String
 readTillPrompt fileHandle = do
     c <- hGetChar fileHandle
-    if c == '>'
-        then do
-            nextChar <- hGetChar fileHandle
-            isReady <- hReady fileHandle
-            case (nextChar, isReady) of
-                (' ', False) -> return (">" ++ [nextChar])
-                (c, True) -> do rest <- readTillPrompt fileHandle
-                                return ('>':c:rest)
-        else do
-            rest <- readTillPrompt fileHandle
-            return (c : rest)
+    if c == '>' then do
+        nextChar <- hGetChar fileHandle
+        isReady <- hReady fileHandle
+        case (nextChar, isReady) of
+            (' ', False) -> return (">" ++ [nextChar])
+            (c, True) -> readTillPrompt fileHandle >>= \rest ->
+                            return ('>':c:rest)
+    else readTillPrompt fileHandle >>= \rest -> return (c : rest)
 
 interp :: IO GHCIProc
 interp = createProcess (proc "ghci" []){
