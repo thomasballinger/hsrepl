@@ -1,5 +1,5 @@
-import System.Process (createProcess, waitForProcess, StdStream(CreatePipe), std_out, std_in, std_err, proc)
-import System.IO (Handle, hFlush, stdout, hPutStr, hGetChar, hClose, openTempFile, hReady)
+import System.Process (createProcess, waitForProcess, StdStream(CreatePipe), std_out, std_in, std_err, proc, shell)
+import System.IO (Handle, hFlush, stdout, hPutStr, hGetChar, hClose, openTempFile, hReady, hGetContents)
 import Data.List (elemIndex, intercalate)
 import Data.Maybe (fromMaybe)
 import Control.Monad (foldM, foldM_)
@@ -57,12 +57,29 @@ doUserCommand proc replState = do
         --Nothing -> please crash
 
 doCommand :: GHCIProc -> ReplState -> String -> IO ReplState
-doCommand (GHCIProc ghci_stdin ghci_stdout ghci_stderr) (ReplState prompts inputs outputs) input = do
+doCommand proc rs ('!':shellCmd) = doShellCommand proc rs shellCmd
+doCommand proc rs cmd = doReplCommand proc rs cmd
+
+
+doReplCommand :: GHCIProc -> ReplState -> String -> IO ReplState
+doReplCommand (GHCIProc ghci_stdin ghci_stdout ghci_stderr) (ReplState prompts inputs outputs) input = do
     hPutStr ghci_stdin input
     hFlush ghci_stdin
     (out, prompt) <- outputAndPrompt ghci_stdout
     err <- waitingOutput ghci_stderr
     return (ReplState (prompt:prompts) (input:inputs) ((err ++ out):outputs))
+
+-- doesn't work with commands that read stdin
+doShellCommand :: GHCIProc -> ReplState -> String -> IO ReplState
+doShellCommand ghci (ReplState prompts inputs outputs) cmd = do
+    (Just stdin, Just stdout, Just stderr, p_handle) <- createProcess (shell cmd){
+            std_out = CreatePipe,
+            std_in = CreatePipe,
+            std_err = CreatePipe}
+    out <- hGetContents stdout
+    err <- hGetContents stderr
+    let prompt = last (lines $ head prompts) in
+        return (ReplState (prompt:prompts) (('!':cmd):inputs) ((err ++ out):outputs))
 
 reevaluate :: [String] -> GHCIProc -> IO (GHCIProc, ReplState)
 reevaluate inputs ghci = do
