@@ -84,10 +84,10 @@ waitingOutput fileHandle = do
 
 -- Returns the output from a previous command and prompt
 outputAndPrompt :: Handle -> IO (String, String)
-outputAndPrompt fileHandle =
-    readTillPrompt fileHandle >>= (\response ->
-        let prompt:reversed_output = reverse (lines response) in
-            return (intercalate "\n" (reverse reversed_output ++ [""]) , prompt))
+outputAndPrompt fileHandle = (\response ->
+    let prompt:reversed_output = reverse (lines response) in
+        (intercalate "\n" (reverse reversed_output ++ [""]) , prompt)) <$>
+    readTillPrompt fileHandle
 
 readTillPrompt :: Handle -> IO String
 readTillPrompt fileHandle = do
@@ -97,9 +97,8 @@ readTillPrompt fileHandle = do
         isReady <- hReady fileHandle
         case (nextChar, isReady) of
             (' ', False) -> return (">" ++ [nextChar])
-            (c, True) -> readTillPrompt fileHandle >>= \rest ->
-                            return ('>':c:rest)
-    else readTillPrompt fileHandle >>= \rest -> return (c : rest)
+            (c, True) -> (['>', c] ++) <$> readTillPrompt fileHandle
+    else (c:) <$> readTillPrompt fileHandle
 
 interp :: IO GHCIProc
 interp = createProcess (proc "ghci" []){
