@@ -25,11 +25,17 @@ fullRenderAtRow :: Int -> ReplState -> IO ()
 fullRenderAtRow row replState = putStr (cursorAtSpot 0 row) >>
     hFlush stdout >> newScreen >> fullRender replState
 
+removeBangIfPresent :: String -> String
+removeBangIfPresent ('!':cmd) = cmd
+removeBangIfPresent cmd = cmd
+
 -- Renders a full REPL session; it better fit on one screen.
 -- EXCEPT for the last prompt, which will be rendered by getInputLine
 fullRender :: ReplState -> IO ()
 fullRender (ReplState prompts inputs outputs) =
-    recursiveRender (mergeThree (reverse (tail prompts)) (reverse inputs) (reverse outputs))
+    recursiveRender (mergeThree (reverse (tail prompts))
+                                (map removeBangIfPresent (reverse inputs))
+                                (reverse outputs))
 
 recursiveRender :: [String] -> IO ()
 recursiveRender = foldr (\x -> (>>) (putStr x >> hFlush stdout)) (return ())
@@ -71,15 +77,14 @@ doReplCommand (GHCIProc ghci_stdin ghci_stdout ghci_stderr) (ReplState prompts i
 
 -- doesn't work with commands that read stdin
 doShellCommand :: GHCIProc -> ReplState -> String -> IO ReplState
-doShellCommand ghci (ReplState prompts inputs outputs) cmd = do
+doShellCommand ghci (ReplState (prevPrompt:prompts) inputs outputs) cmd = do
     (Just stdin, Just stdout, Just stderr, p_handle) <- createProcess (shell cmd){
             std_out = CreatePipe,
             std_in = CreatePipe,
             std_err = CreatePipe}
     out <- hGetContents stdout
     err <- hGetContents stderr
-    let prompt = last (lines $ head prompts) in
-        return (ReplState (prompt:prompts) (('!':cmd):inputs) ((err ++ out):outputs))
+    return (ReplState (prevPrompt:"$ ":prompts) (('!':cmd):inputs) ((err ++ out):outputs))
 
 reevaluate :: [String] -> GHCIProc -> IO (GHCIProc, ReplState)
 reevaluate inputs ghci = do
