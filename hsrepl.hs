@@ -5,7 +5,8 @@ import Data.Maybe (fromMaybe)
 import Control.Monad (foldM, foldM_)
 import System.Directory(getTemporaryDirectory, removeFile)
 import System.Environment(lookupEnv)
-
+import Control.Monad.IO.Class (liftIO)
+import System.Console.Haskeline
 
 data ReplState = ReplState { prompts :: [String],
                              inputs :: [String],
@@ -25,32 +26,35 @@ fullRenderAtRow row replState = putStr (cursorAtSpot 0 row) >>
     hFlush stdout >> newScreen >> fullRender replState
 
 -- Renders a full REPL session; it better fit on one screen.
+-- EXCEPT for the last prompt, which will be rendered by getInputLine
 fullRender :: ReplState -> IO ()
 fullRender (ReplState prompts inputs outputs) =
-    recursiveRender (combineThree (reverse prompts) (reverse inputs) (reverse outputs))
+    recursiveRender (mergeThree (reverse (tail prompts)) (reverse inputs) (reverse outputs))
 
 recursiveRender :: [String] -> IO ()
 recursiveRender = foldr (\x -> (>>) (putStr x >> hFlush stdout)) (return ())
 
--- Zip three sequences of lengths x, y, z where x >= y >= z and x <= z + 1
-combineThree :: [a] -> [a] -> [a] -> [a]
-combineThree (x:xs) (y:ys) (z:zs) = [x, y, z] ++ combineThree xs ys zs
-combineThree (x:xs) (y:yx) [] = [x, y]
-combineThree (x:xs) [] [] = [x]
+-- Zip three sequences of equal length
+mergeThree :: [a] -> [a] -> [a] -> [a]
+mergeThree (x:xs) (y:ys) (z:zs) = [x, y, z] ++ mergeThree xs ys zs
+mergeThree [] [] [] = []
 
 tailOrEmpty :: [String] -> [String]
 tailOrEmpty [] = []
 tailOrEmpty (_:rest) = rest
 
-doUserCommand :: GHCIProc -> ReplState -> IO (GHCIProc, ReplState)
-doUserCommand proc replState =
-    getLine >>= (\input -> case input of
-        "" -> reevaluate (inputs replState) proc
-        "undo" -> reevaluate (tailOrEmpty $ inputs replState) proc
-        "edit" ->
-            fromEditor (bufferFromReplState replState) >>=
+doUserCommand :: GHCIProc -> ReplState -> InputT IO (GHCIProc, ReplState)
+doUserCommand proc replState = do
+    minput <- getInputLine $ head $ prompts replState
+
+    case minput of
+        (Just "") -> liftIO $ reevaluate (inputs replState) proc
+        (Just "undo") -> liftIO $ reevaluate (tailOrEmpty $ inputs replState) proc
+        (Just "edit") ->
+            liftIO $ fromEditor (bufferFromReplState replState) >>=
                 (\newBuffer -> reevaluate (inputsFromBuffer newBuffer) proc)
-        otherwise -> doCommand proc replState (input ++ "\n") >>= (\x -> return (proc, x)))
+        (Just s) -> liftIO $ doCommand proc replState (s ++ "\n") >>= (\x -> return (proc, x))
+        --Nothing -> please crash
 
 doCommand :: GHCIProc -> ReplState -> String -> IO ReplState
 doCommand (GHCIProc ghci_stdin ghci_stdout ghci_stderr) (ReplState prompts inputs outputs) input = do
@@ -135,9 +139,13 @@ bufferFromInputOutputPairs :: String -> [(String, String)] -> String
 bufferFromInputOutputPairs = foldl (\acc (input, output) ->
     input ++ intercalate "" ["--# " ++ x ++ "\n" | x <- lines output] ++ acc)
 
-step :: (GHCIProc, ReplState) -> int -> IO (GHCIProc, ReplState)
-step (proc, rs) _ = fullRenderAtRow 0 rs >> doUserCommand proc rs
-
-main = interp >>= \ghci ->
-    readTillPrompt (out ghci) >>= \r ->
-        foldM_ step (ghci, ReplState [r] [] []) [1..]
+main :: IO ()
+main = do
+    proc <- interp
+    initialPrompt <- readTillPrompt (out proc)
+    runInputT defaultSettings (loop (proc, ReplState [initialPrompt] [] []))
+    where
+        loop :: (GHCIProc, ReplState) -> InputT IO ()
+        loop (proc, rs) = do
+            liftIO $ fullRenderAtRow 0 rs
+            doUserCommand proc rs >>= loop
