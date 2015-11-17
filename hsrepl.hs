@@ -10,7 +10,8 @@ import System.Console.Haskeline
 
 data ReplState = ReplState { prompts :: [String],
                              inputs :: [String],
-                             outputs :: [String] }
+                             outputs :: [String],
+                             info :: String}
                              deriving (Show, Eq)
 
 data GHCIProc = GHCIProc { inp :: Handle,
@@ -32,7 +33,7 @@ removeBangIfPresent cmd = cmd
 -- Renders a full REPL session; it better fit on one screen.
 -- EXCEPT for the last prompt, which will be rendered by getInputLine
 fullRender :: ReplState -> IO ()
-fullRender (ReplState prompts inputs outputs) =
+fullRender (ReplState prompts inputs outputs _) =
     recursiveRender (mergeThree (reverse (tail prompts))
                                 (map removeBangIfPresent (reverse inputs))
                                 (reverse outputs))
@@ -51,6 +52,12 @@ tailOrEmpty (_:rest) = rest
 
 doUserCommand :: GHCIProc -> ReplState -> InputT IO (GHCIProc, ReplState)
 doUserCommand proc replState = do
+
+    let promptHeight = length $ lines $ head $ prompts replState in
+        liftIO $ putStr (replicate promptHeight '\n') >>
+            putStr (info replState) >>
+            putStr ("\x1b[" ++ show promptHeight ++ "A\r") >>
+            hFlush stdout
     minput <- getInputLine $ head $ prompts replState
 
     case minput of
@@ -68,23 +75,23 @@ doCommand proc rs cmd = doReplCommand proc rs cmd
 
 
 doReplCommand :: GHCIProc -> ReplState -> String -> IO ReplState
-doReplCommand (GHCIProc ghci_stdin ghci_stdout ghci_stderr) (ReplState prompts inputs outputs) input = do
+doReplCommand (GHCIProc ghci_stdin ghci_stdout ghci_stderr) (ReplState prompts inputs outputs _) input = do
     hPutStr ghci_stdin input
     hFlush ghci_stdin
     (out, prompt) <- outputAndPrompt ghci_stdout
     err <- waitingOutput ghci_stderr
-    return (ReplState (prompt:prompts) (input:inputs) ((err ++ out):outputs))
+    return (ReplState (prompt:prompts) (input:inputs) ((err ++ out):outputs) [])
 
 -- doesn't work with commands that read stdin
 doShellCommand :: GHCIProc -> ReplState -> String -> IO ReplState
-doShellCommand ghci (ReplState (prevPrompt:prompts) inputs outputs) cmd = do
+doShellCommand ghci (ReplState (prevPrompt:prompts) inputs outputs _) cmd = do
     (Just stdin, Just stdout, Just stderr, p_handle) <- createProcess (shell cmd){
             std_out = CreatePipe,
             std_in = CreatePipe,
             std_err = CreatePipe}
     out <- hGetContents stdout
     err <- hGetContents stderr
-    return (ReplState (prevPrompt:"$ ":prompts) (('!':cmd):inputs) ((err ++ out):outputs))
+    return (ReplState (prevPrompt:"$ ":prompts) (('!':cmd):inputs) ((err ++ out):outputs) [])
 
 reevaluate :: [String] -> GHCIProc -> IO (GHCIProc, ReplState)
 reevaluate inputs ghci = do
@@ -96,7 +103,7 @@ reevaluate inputs ghci = do
     newInterp <- interp
     header <- readTillPrompt (out newInterp)
 
-    replState <- foldM (doCommand newInterp) (ReplState [header] [] []) (reverse inputs)
+    replState <- foldM (doCommand newInterp) (ReplState [header] [] [] []) (reverse inputs)
     return (newInterp, replState)
 
 waitingOutput fileHandle = do
@@ -108,12 +115,20 @@ waitingOutput fileHandle = do
             return (curChar : rest)
         else return ""
 
+replCompletions :: GHCIProc -> String -> IO (String, [String])
+replCompletions proc incomplete = do
+    hPutStr (inp proc) $ ":complete repl \"" ++ incomplete ++ "\""
+    hFlush (inp proc)
+    (output, _) <- outputAndPrompt (out proc)
+    let (common:rest) = lines output in return (common, rest)
+
+
 -- Returns the output from a previous command and prompt
 outputAndPrompt :: Handle -> IO (String, String)
 outputAndPrompt fileHandle = (\response ->
     let prompt:reversed_output = reverse (lines response) in
         (intercalate "\n" (reverse reversed_output ++ [""]) , prompt)) <$>
-    readTillPrompt fileHandle
+        readTillPrompt fileHandle
 
 readTillPrompt :: Handle -> IO String
 readTillPrompt fileHandle = do
@@ -154,7 +169,7 @@ inputsFromBuffer :: String -> [String]
 inputsFromBuffer buffer = reverse [x ++ "\n" | x <- lines buffer, head x /= '-']
 
 bufferFromReplState :: ReplState -> String
-bufferFromReplState (ReplState _ inputs outputs) =
+bufferFromReplState (ReplState _ inputs outputs _) =
     bufferFromInputOutputPairs "--# save and quit to eval" $ zip inputs outputs
 
 bufferFromInputOutputPairs :: String -> [(String, String)] -> String
@@ -165,7 +180,7 @@ main :: IO ()
 main = do
     proc <- interp
     initialPrompt <- readTillPrompt (out proc)
-    runInputT defaultSettings (loop (proc, ReplState [initialPrompt] [] []))
+    runInputT defaultSettings (loop (proc, ReplState [initialPrompt] [] [] "maybe the type signature?"))
     where
         loop :: (GHCIProc, ReplState) -> InputT IO ()
         loop (proc, rs) = do
