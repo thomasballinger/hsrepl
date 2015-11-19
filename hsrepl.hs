@@ -73,7 +73,6 @@ doCommand :: GHCIProc -> ReplState -> String -> IO ReplState
 doCommand proc rs ('!':shellCmd) = doShellCommand proc rs shellCmd
 doCommand proc rs cmd = doReplCommand proc rs cmd
 
-
 doReplCommand :: GHCIProc -> ReplState -> String -> IO ReplState
 doReplCommand (GHCIProc ghci_stdin ghci_stdout ghci_stderr) (ReplState prompts inputs outputs _) input = do
     hPutStr ghci_stdin input
@@ -100,8 +99,7 @@ reevaluate inputs ghci = do
     hPutStr (inp ghci) "\xa"
     hFlush (inp ghci)
 
-    newInterp <- interp
-    header <- readTillPrompt (out newInterp)
+    (newInterp, header) <- interpAndHeader
 
     replState <- foldM (doCommand newInterp) (ReplState [header] [] [] []) (reverse inputs)
     return (newInterp, replState)
@@ -117,11 +115,15 @@ waitingOutput fileHandle = do
 
 replCompletions :: GHCIProc -> String -> IO (String, [String])
 replCompletions proc incomplete = do
-    hPutStr (inp proc) $ ":complete repl \"" ++ incomplete ++ "\""
-    hFlush (inp proc)
-    (output, _) <- outputAndPrompt (out proc)
+    output <- doCommandSilently proc $ ":complete repl \"" ++ incomplete ++ "\""
     let (common:rest) = lines output in return (common, rest)
 
+doCommandSilently :: GHCIProc -> String -> IO String
+doCommandSilently proc cmd = do
+    hPutStr (inp proc) cmd >> hFlush (inp proc)
+    (output, _) <- outputAndPrompt (out proc)
+    err <- waitingOutput (err proc)
+    return (err ++ output)
 
 -- Returns the output from a previous command and prompt
 outputAndPrompt :: Handle -> IO (String, String)
@@ -141,13 +143,20 @@ readTillPrompt fileHandle = do
             (c, True) -> (['>', c] ++) <$> readTillPrompt fileHandle
     else (c:) <$> readTillPrompt fileHandle
 
-interp :: IO GHCIProc
-interp = createProcess (proc "ghci" []){
+rawInterp :: IO GHCIProc
+rawInterp = (\(Just stdin, Just stdout, Just stderr, p_handle) ->
+             GHCIProc stdin stdout stderr) <$>
+         createProcess (proc "ghci" []){
             std_out = CreatePipe,
             std_in = CreatePipe,
-            std_err = CreatePipe} >>=
-            (\(Just stdin, Just stdout, Just stderr, p_handle) ->
-                return (GHCIProc stdin stdout stderr))
+            std_err = CreatePipe}
+
+interpAndHeader :: IO (GHCIProc, String)
+interpAndHeader = do
+    interp <- rawInterp
+    header <- readTillPrompt (out interp)
+    doCommandSilently interp "unset +m\n"
+    return (interp, header)
 
 fromEditor :: String -> IO String
 fromEditor buffer = do
@@ -178,8 +187,7 @@ bufferFromInputOutputPairs = foldl (\acc (input, output) ->
 
 main :: IO ()
 main = do
-    proc <- interp
-    initialPrompt <- readTillPrompt (out proc)
+    (proc, initialPrompt) <- interpAndHeader
     runInputT defaultSettings (loop (proc, ReplState [initialPrompt] [] [] "maybe the type signature?"))
     where
         loop :: (GHCIProc, ReplState) -> InputT IO ()
