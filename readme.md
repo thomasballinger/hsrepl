@@ -9,3 +9,5 @@ typing edit and hitting return will open the current session in a text editor
 and upon saving this edited session will be rerun
 
 start a command with a '!' character to run a shell command
+
+![demo of hsrepl features](http://ballingt.com/assets/hsrepldemo.gif)
